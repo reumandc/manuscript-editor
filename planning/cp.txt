@@ -1,0 +1,13 @@
+I supervise a lot of junior scientists. They often send me draft scientific manuscripts written in Word or Latex where the writing is bad. I then have to spend a lot of time editing. Some of that is high-level thinking, but much of it is lower level, fixing sentences, making things more succinct, altering word choice, altering paragraphs to make the topic sentence clearer, etc. I would like to plan some tools to automate some of that so I can spend more time on the higher level stuff.
+
+I am not sure all of what I want is practical, but let me describe what I want and you can perhaps tell me what may be practical and we can go from there to a plan on implementing a tool. One challenge is, the most common workflow is in Word, using track changes. And often I get a document which already has tracked changes in it, from another editor, and I am asked to add my changes on top. I understand it is difficult, slow, and not very effective for AIs like Claude to directly edit Word documents, especially when track changes is involved.
+
+The outer interface of the tool I imagine could be a bash command which is run from a folder, with arguments specifying: 1) the file name in the folder of the Word or latex document in the folder to be edited; 2) the file name in the folder of a text document containing a prompt to Claude on the nature of edits that I think are necessary. 
+
+The tool could then:
+1) convert the file to latex if it is a Word file
+2) invoke Claude to edit the latex according to the contents of the text file
+3) save the original latex file (if the input file was Word), the edited file, and a latex diff file
+4) compile the three latex files, producing pdfs
+
+How practical is this, and, if practical, how do we make a tool to get it done?   
