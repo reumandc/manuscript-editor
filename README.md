@@ -1,14 +1,13 @@
 # manuscript-editor
 
 A small bash tool that runs a `.docx` manuscript through Claude Code for
-low-level copyediting (sentence tightening, word choice, topic-sentence
-repair) and emits three PDFs — the original, the edited version, and a
-side-by-side `latexdiff` — so you can visually review the changes before
-applying accepted edits by hand in Word.
+(mostly low-level) editing and emits three PDFs — the original, the edited 
+version, and a side-by-side `latexdiff` — so you can visually review the 
+changes before applying accepted edits by hand in Word.
 
 Scope is deliberately narrow: v1 does not round-trip edits back into Word
 as tracked changes. See `manuscript_editor_plan.md` for the full design
-rationale.
+rationale of v1.
 
 ## Install
 
