@@ -52,11 +52,17 @@ you want. See `examples/sample_prompt.txt` for a starting point.
 For input `paper.docx`, the output directory will contain:
 
 - `paper.md`, `paper.edited.md` — human-readable drafts
+- `paper.accepted.docx`, `paper.edited.docx` — Word versions of the
+  accepted-baseline and edited manuscripts, sharing styles from the
+  original; feed them to Word's `Review → Compare` to get a
+  tracked-changes document you can accept/reject directly
 - `paper.tex`, `paper.edited.tex`, `paper.diff.tex` — the `latexdiff` inputs and output
 - `paper.pdf`, `paper.edited.pdf`, `paper.diff.pdf` — for visual review
 
 The diff PDF is the one you will mostly look at. Insertions are shown in
-blue and deletions in red (the `latexdiff` default).
+blue and deletions in red (the `latexdiff` default). When you want to
+apply accepted edits back into Word, open `paper.accepted.docx` and
+`paper.edited.docx` and use `Review → Compare → Compare…` in Word.
 
 ## Example
 
@@ -74,11 +80,13 @@ open draft.diff.pdf
    Markdown, with a tightly scoped system prompt that forbids changes to
    citations, cross-references, equations, tables, figure labels, and
    numbered superscript citations.
-3. `pandoc` converts both Markdown files to LaTeX.
-4. `latexdiff` produces a third `.tex` with visible insertions and
+3. `pandoc` converts both Markdown files back to `.docx`, using the
+   original `.docx` as `--reference-doc` so styles are preserved.
+4. `pandoc` converts both Markdown files to LaTeX.
+5. `latexdiff` produces a third `.tex` with visible insertions and
    deletions.
-5. `latexmk -pdf` compiles all three to PDF.
-6. A post-edit validator (`lib/preserve_tokens.sh`) checks that citation
+6. `latexmk -pdf` compiles all three to PDF.
+7. A post-edit validator (`lib/preserve_tokens.sh`) checks that citation
    keys, `\ref{...}` tokens, and `\textsuperscript{...}` blocks have not
    drifted between the original and edited LaTeX; it warns (but does not
    fail) if they have.

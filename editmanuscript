@@ -123,6 +123,8 @@ BASE="$(basename "$DOC_ABS" .docx)"
 
 MD_ORIG="$OUT_ABS/$BASE.md"
 MD_EDIT="$OUT_ABS/$BASE.edited.md"
+DOCX_ACC="$OUT_ABS/$BASE.accepted.docx"
+DOCX_EDIT="$OUT_ABS/$BASE.edited.docx"
 TEX_ORIG="$OUT_ABS/$BASE.tex"
 TEX_EDIT="$OUT_ABS/$BASE.edited.tex"
 TEX_DIFF="$OUT_ABS/$BASE.diff.tex"
@@ -135,7 +137,7 @@ echo "editmanuscript: incoming tracked changes: $INCOMING_TC"
 echo ""
 
 # --- step 1: docx → md (accepting prior tracked changes by default) ---------
-echo "[1/7] pandoc docx → md (--track-changes=$INCOMING_TC)"
+echo "[1/8] pandoc docx → md (--track-changes=$INCOMING_TC)"
 pandoc "$DOC_ABS" \
     --track-changes="$INCOMING_TC" \
     --wrap=preserve \
@@ -148,7 +150,7 @@ if [[ ! -s "$MD_ORIG" ]]; then
 fi
 
 # --- step 2: claude -p edits md → edited md ---------------------------------
-echo "[2/7] claude -p (model=$MODEL) applying your prompt"
+echo "[2/8] claude -p (model=$MODEL) applying your prompt"
 
 # Read the user-supplied editing instructions and system prompt as strings.
 SYSTEM_PROMPT_CONTENT="$(cat "$SYSTEM_PROMPT_FILE")"
@@ -271,15 +273,22 @@ if [[ ! -s "$MD_EDIT" ]]; then
     exit 1
 fi
 
-# --- step 3: md → tex for both versions -------------------------------------
-echo "[3/7] pandoc md → tex (original)"
+# --- step 3: md → docx for both versions (so you can Compare in Word) -------
+# Using the original .docx as --reference-doc preserves styles, so the two
+# outputs share a template and Word's Review → Compare produces clean output.
+echo "[3/8] pandoc md → docx (accepted + edited)"
+pandoc "$MD_ORIG" --reference-doc="$DOC_ABS" -o "$DOCX_ACC"
+pandoc "$MD_EDIT" --reference-doc="$DOC_ABS" -o "$DOCX_EDIT"
+
+# --- step 4: md → tex for both versions -------------------------------------
+echo "[4/8] pandoc md → tex (original)"
 pandoc "$MD_ORIG" --standalone -o "$TEX_ORIG"
 
-echo "[4/7] pandoc md → tex (edited)"
+echo "[5/8] pandoc md → tex (edited)"
 pandoc "$MD_EDIT" --standalone -o "$TEX_EDIT"
 
-# --- step 4: latexdiff ------------------------------------------------------
-echo "[5/7] latexdiff"
+# --- step 5: latexdiff ------------------------------------------------------
+echo "[6/8] latexdiff"
 # --math-markup=whole avoids per-symbol highlighting inside equations.
 # --graphics-markup=0 avoids marking up included-graphics commands.
 latexdiff \
@@ -287,28 +296,30 @@ latexdiff \
     --graphics-markup=0 \
     "$TEX_ORIG" "$TEX_EDIT" > "$TEX_DIFF"
 
-# --- step 5: preserved-token validator (warn-only) --------------------------
-echo "[6/7] preserve_tokens validator"
+# --- step 6: preserved-token validator (warn-only) --------------------------
+echo "[7/8] preserve_tokens validator"
 if [[ -x "$VALIDATOR" ]]; then
     "$VALIDATOR" "$TEX_ORIG" "$TEX_EDIT" || true
 else
     echo "editmanuscript: validator not executable at $VALIDATOR (skipping)"
 fi
 
-# --- step 6: compile PDFs ---------------------------------------------------
+# --- step 7: compile PDFs ---------------------------------------------------
 if [[ $NO_PDF -eq 1 ]]; then
-    echo "[7/7] --no-pdf set; stopping after .tex generation."
+    echo "[8/8] --no-pdf set; stopping after .tex generation."
     echo ""
     echo "Produced:"
     echo "  $MD_ORIG"
     echo "  $MD_EDIT"
+    echo "  $DOCX_ACC"
+    echo "  $DOCX_EDIT"
     echo "  $TEX_ORIG"
     echo "  $TEX_EDIT"
     echo "  $TEX_DIFF"
     exit 0
 fi
 
-echo "[7/7] latexmk (3 documents)"
+echo "[8/8] latexmk (3 documents)"
 pushd "$OUT_ABS" > /dev/null
 
 compile_one() {
@@ -339,7 +350,9 @@ popd > /dev/null
 # --- summary ----------------------------------------------------------------
 echo ""
 echo "editmanuscript: done."
-for f in "$MD_ORIG" "$MD_EDIT" "$TEX_ORIG" "$TEX_EDIT" "$TEX_DIFF" \
+for f in "$MD_ORIG" "$MD_EDIT" \
+         "$DOCX_ACC" "$DOCX_EDIT" \
+         "$TEX_ORIG" "$TEX_EDIT" "$TEX_DIFF" \
          "$OUT_ABS/$BASE.pdf" "$OUT_ABS/$BASE.edited.pdf" "$OUT_ABS/$BASE.diff.pdf"; do
     if [[ -f "$f" ]]; then
         printf "  ✓ %s\n" "$f"
