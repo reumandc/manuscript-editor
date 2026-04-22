@@ -1,0 +1,24 @@
+Please apply the following kinds of low-level copyedits throughout the
+manuscript:
+
+1. Tighten sentences. Cut filler words and redundant qualifiers. Replace
+   phrases like "in order to" with "to", "due to the fact that" with
+   "because", "it is important to note that" with nothing.
+
+2. Improve word choice. Replace vague verbs and nouns with concrete ones
+   where the intended meaning is clear. Do not change technical terms or
+   jargon you are uncertain about.
+
+3. Repair topic sentences. Each paragraph's first sentence should clearly
+   preview what the paragraph argues or describes. If the current topic
+   sentence buries the paragraph's real claim, rewrite it to lead with
+   that claim.
+
+4. Prefer active voice where it does not distort meaning, especially in
+   the Discussion. Leave the Methods in passive voice as is conventional.
+
+5. Fix obvious grammar and agreement errors.
+
+6. Preserve the scientific content exactly. Do not alter any numbers,
+   statistical claims, citations, figure references, equations, or the
+   order of arguments. Do not add or remove citations.

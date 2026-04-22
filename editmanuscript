@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+# editmanuscript DOCUMENT.docx PROMPT_FILE [options]
+#
+# Pipeline: accept prior tracked changes → docx→md → claude -p edits →
+# md→tex (original & edited) → latexdiff → latexmk → three PDFs.
+#
+# See README.md for details.
+
+set -euo pipefail
+
+# --- locate ourselves so we can find prompts/ and lib/ -----------------------
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+SYSTEM_PROMPT_FILE="$SCRIPT_DIR/prompts/system.md"
+VALIDATOR="$SCRIPT_DIR/lib/preserve_tokens.sh"
+
+# --- defaults ---------------------------------------------------------------
+MODEL="sonnet"
+INCOMING_TC="accept"   # accept | reject | all
+OUT_DIR=""
+NO_PDF=0
+KEEP_INTERMEDIATES=0
+MAX_BUDGET_USD="5"
+
+usage() {
+    cat <<'EOF'
+Usage: editmanuscript DOCUMENT.docx PROMPT_FILE [options]
+
+Arguments:
+  DOCUMENT.docx       Input Word document.
+  PROMPT_FILE         Plain-text file describing the edits you want Claude to make.
+
+Options:
+  --out DIR                 Output folder (default: same directory as DOCUMENT).
+  --model sonnet|opus       Claude model (default: sonnet).
+  --incoming-tc MODE        How to handle pre-existing track changes in the
+                            input .docx: accept | reject | all (default: accept).
+  --no-pdf                  Stop after producing .tex files (skip latexmk).
+  --keep-intermediates      Don't clean LaTeX aux files after compilation.
+  --max-budget-usd N        Max dollars Claude may spend on this run (default: 5).
+  -h, --help                Show this help.
+EOF
+}
+
+# --- arg parsing ------------------------------------------------------------
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --out)                  OUT_DIR="$2"; shift 2 ;;
+        --model)                MODEL="$2"; shift 2 ;;
+        --incoming-tc)          INCOMING_TC="$2"; shift 2 ;;
+        --no-pdf)               NO_PDF=1; shift ;;
+        --keep-intermediates)   KEEP_INTERMEDIATES=1; shift ;;
+        --max-budget-usd)       MAX_BUDGET_USD="$2"; shift 2 ;;
+        -h|--help)              usage; exit 0 ;;
+        --) shift; while [[ $# -gt 0 ]]; do POSITIONAL+=("$1"); shift; done ;;
+        -*) echo "editmanuscript: unknown option: $1" >&2; usage >&2; exit 2 ;;
+        *)  POSITIONAL+=("$1"); shift ;;
+    esac
+done
+
+if [[ ${#POSITIONAL[@]} -ne 2 ]]; then
+    usage >&2
+    exit 2
+fi
+
+DOC="${POSITIONAL[0]}"
+PROMPT_FILE="${POSITIONAL[1]}"
+
+# --- validate inputs --------------------------------------------------------
+if [[ ! -f "$DOC" ]]; then
+    echo "editmanuscript: document not found: $DOC" >&2
+    exit 1
+fi
+if [[ ! -f "$PROMPT_FILE" ]]; then
+    echo "editmanuscript: prompt file not found: $PROMPT_FILE" >&2
+    exit 1
+fi
+
+case "$DOC" in
+    *.docx) ;;
+    *) echo "editmanuscript: v1 supports .docx inputs only (got: $DOC)" >&2; exit 1 ;;
+esac
+
+case "$INCOMING_TC" in
+    accept|reject|all) ;;
+    *) echo "editmanuscript: --incoming-tc must be accept|reject|all" >&2; exit 2 ;;
+esac
+
+case "$MODEL" in
+    sonnet|opus) ;;
+    *) echo "editmanuscript: --model must be sonnet|opus" >&2; exit 2 ;;
+esac
+
+for dep in pandoc latexdiff claude; do
+    if ! command -v "$dep" > /dev/null 2>&1; then
+        echo "editmanuscript: missing dependency: $dep" >&2
+        exit 1
+    fi
+done
+if [[ $NO_PDF -eq 0 ]] && ! command -v latexmk > /dev/null 2>&1; then
+    echo "editmanuscript: missing dependency: latexmk (or use --no-pdf)" >&2
+    exit 1
+fi
+
+if [[ ! -f "$SYSTEM_PROMPT_FILE" ]]; then
+    echo "editmanuscript: system prompt missing: $SYSTEM_PROMPT_FILE" >&2
+    exit 1
+fi
+
+# --- resolve paths ----------------------------------------------------------
+DOC_ABS="$(readlink -f "$DOC")"
+PROMPT_ABS="$(readlink -f "$PROMPT_FILE")"
+
+if [[ -z "$OUT_DIR" ]]; then
+    OUT_DIR="$(dirname "$DOC_ABS")"
+fi
+mkdir -p "$OUT_DIR"
+OUT_ABS="$(readlink -f "$OUT_DIR")"
+
+# Base name without .docx extension
+BASE="$(basename "$DOC_ABS" .docx)"
+
+MD_ORIG="$OUT_ABS/$BASE.md"
+MD_EDIT="$OUT_ABS/$BASE.edited.md"
+TEX_ORIG="$OUT_ABS/$BASE.tex"
+TEX_EDIT="$OUT_ABS/$BASE.edited.tex"
+TEX_DIFF="$OUT_ABS/$BASE.diff.tex"
+
+echo "editmanuscript: input      $DOC_ABS"
+echo "editmanuscript: prompt     $PROMPT_ABS"
+echo "editmanuscript: output dir $OUT_ABS"
+echo "editmanuscript: model      $MODEL"
+echo "editmanuscript: incoming tracked changes: $INCOMING_TC"
+echo ""
+
+# --- step 1: docx → md (accepting prior tracked changes by default) ---------
+echo "[1/7] pandoc docx → md (--track-changes=$INCOMING_TC)"
+pandoc "$DOC_ABS" \
+    --track-changes="$INCOMING_TC" \
+    --wrap=preserve \
+    -t markdown \
+    -o "$MD_ORIG"
+
+if [[ ! -s "$MD_ORIG" ]]; then
+    echo "editmanuscript: pandoc produced an empty markdown file." >&2
+    exit 1
+fi
+
+# --- step 2: claude -p edits md → edited md ---------------------------------
+echo "[2/7] claude -p (model=$MODEL) applying your prompt"
+
+# Read the user-supplied editing instructions and system prompt as strings.
+SYSTEM_PROMPT_CONTENT="$(cat "$SYSTEM_PROMPT_FILE")"
+USER_PROMPT_CONTENT="$(cat "$PROMPT_ABS")"
+
+# Build the user message. Claude needs explicit input/output paths plus the
+# user's instructions. We reference files by absolute path to avoid CWD
+# surprises and pass --add-dir so Claude can write into OUT_ABS.
+USER_MSG=$(cat <<EOF
+Edit the scientific manuscript at this path:
+
+  INPUT:  $MD_ORIG
+
+Write the edited version to:
+
+  OUTPUT: $MD_EDIT
+
+Follow the system prompt's rules exactly. The user's editing instructions are:
+
+--- USER INSTRUCTIONS ---
+$USER_PROMPT_CONTENT
+--- END USER INSTRUCTIONS ---
+
+Use the Read tool once on INPUT, apply the edits in memory, then use the Write
+tool once to save the result to OUTPUT. Do not modify any other file.
+EOF
+)
+
+# Run Claude Code in headless mode from OUT_ABS so tool access is automatic.
+# --allowed-tools restricts to Read/Write. --permission-mode acceptEdits
+# auto-accepts Write operations so the run does not block on a prompt.
+(
+    cd "$OUT_ABS"
+    claude \
+        --print \
+        --model "$MODEL" \
+        --system-prompt "$SYSTEM_PROMPT_CONTENT" \
+        --allowed-tools "Read Write" \
+        --permission-mode acceptEdits \
+        --max-budget-usd "$MAX_BUDGET_USD" \
+        "$USER_MSG"
+)
+
+if [[ ! -s "$MD_EDIT" ]]; then
+    echo "" >&2
+    echo "editmanuscript: Claude did not produce $MD_EDIT (or it is empty)." >&2
+    echo "  Check the model output above. You may need to rerun, raise --max-budget-usd," >&2
+    echo "  or simplify the prompt file." >&2
+    exit 1
+fi
+
+# --- step 3: md → tex for both versions -------------------------------------
+echo "[3/7] pandoc md → tex (original)"
+pandoc "$MD_ORIG" --standalone -o "$TEX_ORIG"
+
+echo "[4/7] pandoc md → tex (edited)"
+pandoc "$MD_EDIT" --standalone -o "$TEX_EDIT"
+
+# --- step 4: latexdiff ------------------------------------------------------
+echo "[5/7] latexdiff"
+# --math-markup=whole avoids per-symbol highlighting inside equations.
+# --graphics-markup=0 avoids marking up included-graphics commands.
+latexdiff \
+    --math-markup=whole \
+    --graphics-markup=0 \
+    "$TEX_ORIG" "$TEX_EDIT" > "$TEX_DIFF"
+
+# --- step 5: preserved-token validator (warn-only) --------------------------
+echo "[6/7] preserve_tokens validator"
+if [[ -x "$VALIDATOR" ]]; then
+    "$VALIDATOR" "$TEX_ORIG" "$TEX_EDIT" || true
+else
+    echo "editmanuscript: validator not executable at $VALIDATOR (skipping)"
+fi
+
+# --- step 6: compile PDFs ---------------------------------------------------
+if [[ $NO_PDF -eq 1 ]]; then
+    echo "[7/7] --no-pdf set; stopping after .tex generation."
+    echo ""
+    echo "Produced:"
+    echo "  $MD_ORIG"
+    echo "  $MD_EDIT"
+    echo "  $TEX_ORIG"
+    echo "  $TEX_EDIT"
+    echo "  $TEX_DIFF"
+    exit 0
+fi
+
+echo "[7/7] latexmk (3 documents)"
+pushd "$OUT_ABS" > /dev/null
+
+compile_one() {
+    local tex="$1"
+    # -interaction=nonstopmode: never prompt on errors.
+    # -halt-on-error: but still exit non-zero if the doc is truly broken.
+    # We *do not* halt-on-error here because latexdiff output can contain
+    # benign warnings that non-zero-exit a purist latexmk. We check for the
+    # resulting PDF instead.
+    if ! latexmk -pdf -interaction=nonstopmode -file-line-error "$tex" > "$tex.log" 2>&1; then
+        echo "  ⚠  latexmk returned non-zero on $tex; check $tex.log"
+    fi
+}
+
+compile_one "$(basename "$TEX_ORIG")"
+compile_one "$(basename "$TEX_EDIT")"
+compile_one "$(basename "$TEX_DIFF")"
+
+if [[ $KEEP_INTERMEDIATES -eq 0 ]]; then
+    latexmk -c "$(basename "$TEX_ORIG")" > /dev/null 2>&1 || true
+    latexmk -c "$(basename "$TEX_EDIT")" > /dev/null 2>&1 || true
+    latexmk -c "$(basename "$TEX_DIFF")" > /dev/null 2>&1 || true
+    rm -f ./*.tex.log
+fi
+
+popd > /dev/null
+
+# --- summary ----------------------------------------------------------------
+echo ""
+echo "editmanuscript: done."
+for f in "$MD_ORIG" "$MD_EDIT" "$TEX_ORIG" "$TEX_EDIT" "$TEX_DIFF" \
+         "$OUT_ABS/$BASE.pdf" "$OUT_ABS/$BASE.edited.pdf" "$OUT_ABS/$BASE.diff.pdf"; do
+    if [[ -f "$f" ]]; then
+        printf "  ✓ %s\n" "$f"
+    else
+        printf "  ✗ %s (not produced)\n" "$f"
+    fi
+done
