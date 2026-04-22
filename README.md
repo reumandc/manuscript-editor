@@ -5,9 +5,10 @@ A small bash tool that runs a `.docx` manuscript through Claude Code for
 version, and a side-by-side `latexdiff` — so you can visually review the 
 changes before applying accepted edits by hand in Word.
 
-Scope is deliberately narrow: v1 does not round-trip edits back into Word
-as tracked changes. See `manuscript_editor_plan.md` for the full design
-rationale of v1.
+Scope is deliberately narrow: This version does not round-trip edits back 
+into Word as tracked changes. It *does*, however, make two docx documents,
+one with the original and one with the edited text, which the user can 
+compare within Word using the compare feature. 
 
 ## Install
 
@@ -59,8 +60,8 @@ For input `paper.docx`, the output directory will contain:
 - `paper.tex`, `paper.edited.tex`, `paper.diff.tex` — the `latexdiff` inputs and output
 - `paper.pdf`, `paper.edited.pdf`, `paper.diff.pdf` — for visual review
 
-The diff PDF is the one you will mostly look at. Insertions are shown in
-blue and deletions in red (the `latexdiff` default). When you want to
+The diff PDF is probably the one you will mostly look at. Insertions are 
+shown in blue and deletions in red (the `latexdiff` default). When you want to
 apply accepted edits back into Word, open `paper.accepted.docx` and
 `paper.edited.docx` and use `Review → Compare → Compare…` in Word.
 
