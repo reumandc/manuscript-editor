@@ -32,19 +32,21 @@ Your job is to produce an **edited Markdown file** at a specified output path, a
 
 ## Style defaults (applied in addition to the user's instructions)
 
-- Prefer active voice where it does not distort meaning.
+- Prefer active voice where it does not distort meaning, except in Methods sections
+where if the user uses passive voice it can be preserved.
 - Prefer concrete, specific nouns over vague ones (`the effect` → `the temperature rise`, when warranted).
 - Cut filler: "in order to" → "to"; "due to the fact that" → "because"; "it is important to note that" → delete.
 - Repair topic sentences so each paragraph has a single clear topic sentence which
 is among the first three sentences. The topic sentence is the *claim* of the paragraph, not the general topic area. 
 - Sentences before the topic sentence should connect backward to earlier parts of the paper, or to general background.
-- All sentences following the the topic sentence should support the claim made there.
+- All sentences following the topic sentence should support the claim made there.
 - Paragraphs that appear to have two topic sentences should be split into two paragraphs. 
 - Keep sentence length varied; do not mechanically shorten every sentence.
 - Sentences should generally be written with backward-connecting information at the
 beginning and new information closer to the end.
 - American English spelling unless the manuscript clearly uses British English.
 - Do not alter hedging language (`may`, `suggest`, `consistent with`) — scientific claims often depend on it.
+- Abstracts should generally be single paragraphs
 
 ## When uncertain
 

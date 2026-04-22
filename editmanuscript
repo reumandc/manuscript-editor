@@ -180,17 +180,88 @@ EOF
 # Run Claude Code in headless mode from OUT_ABS so tool access is automatic.
 # --allowed-tools restricts to Read/Write. --permission-mode acceptEdits
 # auto-accepts Write operations so the run does not block on a prompt.
-(
-    cd "$OUT_ABS"
-    claude \
-        --print \
-        --model "$MODEL" \
-        --system-prompt "$SYSTEM_PROMPT_CONTENT" \
-        --allowed-tools "Read Write" \
-        --permission-mode acceptEdits \
-        --max-budget-usd "$MAX_BUDGET_USD" \
-        "$USER_MSG"
-)
+#
+# --output-format stream-json streams real-time events; we pipe them through
+# jq and a small bash loop to render interactive-style progress. If jq is not
+# installed we fall back to plain text output with a "." heartbeat.
+run_claude_with_progress() {
+    if command -v jq > /dev/null 2>&1; then
+        # Single jq process emits one tab-separated record per interesting event.
+        (
+            cd "$OUT_ABS"
+            claude \
+                --print \
+                --output-format stream-json \
+                --verbose \
+                --include-partial-messages \
+                --model "$MODEL" \
+                --system-prompt "$SYSTEM_PROMPT_CONTENT" \
+                --allowed-tools "Read Write" \
+                --permission-mode acceptEdits \
+                --max-budget-usd "$MAX_BUDGET_USD" \
+                "$USER_MSG"
+        ) | jq -r --unbuffered '
+            if .type == "system" and (.subtype // "") == "init" then
+                ["init", (.model // "")] | @tsv
+            elif .type == "assistant" then
+                (.message.content[]? | select(.type == "tool_use") |
+                    ["tool", (.name // ""), ((.input.file_path // .input.path // "") | tostring)]
+                    | @tsv)
+            elif .type == "stream_event" and .event.delta.type == "text_delta" then
+                ["delta", ((.event.delta.text // "") | length | tostring)] | @tsv
+            elif .type == "result" then
+                ["result",
+                 ((.total_cost_usd // 0) | tostring),
+                 ((.duration_ms // 0) | tostring),
+                 (.subtype // "")] | @tsv
+            else empty end
+        ' | {
+            chars=0
+            while IFS=$'\t' read -r kind a b c; do
+                case "$kind" in
+                    init)
+                        echo "  [claude] session started (model=$a)"
+                        ;;
+                    tool)
+                        if [[ $chars -gt 0 ]]; then printf "\n"; chars=0; fi
+                        echo "  [claude] tool: $a  $b"
+                        ;;
+                    delta)
+                        chars=$((chars + a))
+                        printf "\r  [claude] generating... (%d chars)   " "$chars"
+                        ;;
+                    result)
+                        if [[ $chars -gt 0 ]]; then printf "\n"; chars=0; fi
+                        echo "  [claude] done (cost=\$$a, ${b}ms, $c)"
+                        ;;
+                esac
+            done
+        }
+    else
+        # Fallback: run claude in background, print a dot every 2s until done.
+        echo "  (jq not installed; showing heartbeat only)"
+        (
+            cd "$OUT_ABS"
+            claude \
+                --print \
+                --model "$MODEL" \
+                --system-prompt "$SYSTEM_PROMPT_CONTENT" \
+                --allowed-tools "Read Write" \
+                --permission-mode acceptEdits \
+                --max-budget-usd "$MAX_BUDGET_USD" \
+                "$USER_MSG"
+        ) &
+        local pid=$!
+        while kill -0 "$pid" 2>/dev/null; do
+            printf "."
+            sleep 2
+        done
+        printf "\n"
+        wait "$pid"
+    fi
+}
+
+run_claude_with_progress
 
 if [[ ! -s "$MD_EDIT" ]]; then
     echo "" >&2
